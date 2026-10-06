@@ -72,6 +72,10 @@ legend{font-size:13px;color:var(--muted);padding:0 4px}
 .form label.chk input{width:auto}
 .err{color:#a3354b;font-size:14px;margin:0}
 .lock{position:fixed;right:16px;bottom:16px;z-index:3;font-size:13px;padding:6px 14px;background:rgba(255,250,247,.85)}
+.zoom{position:fixed;left:16px;bottom:16px;z-index:3;display:flex;flex-direction:column;gap:8px}
+.zb{width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:rgba(255,250,247,.92);color:var(--accent);cursor:pointer;display:grid;place-items:center;box-shadow:0 4px 14px rgba(160,90,100,.16)}
+.zb svg{position:static;inset:auto;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.zb:focus-visible{outline:2px solid var(--rose);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){#sheet,.card{transition:none}}
 </style>
 </head>
@@ -83,6 +87,10 @@ legend{font-size:13px;color:var(--muted);padding:0 4px}
 </header>
 <div id="wrap"><div id="msg">Cargando…</div><div id="tree"></div></div>
 <button id="lockBtn" class="btn lock">Editar</button>
+<div class="zoom" role="group" aria-label="Zoom">
+  <button class="zb" id="zIn" aria-label="Acercar"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"/></svg></button>
+  <button class="zb" id="zOut" aria-label="Alejar"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M7.5 10.5h6"/></svg></button>
+</div>
 <div id="scrim" hidden></div>
 <div id="sheet" role="dialog" aria-label="Ficha"><button class="x" onclick="closeSheet()" aria-label="Cerrar">×</button><div id="sheetBody"></div></div>
 
@@ -357,8 +365,24 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 function setScale(s){scale=s; const t=document.getElementById('tree');
   t.style.transform=`scale(${scale})`; t.style.marginBottom=`${(scale-1)*t.dataset.h}px`; t.style.marginRight=`${(scale-1)*t.dataset.w}px`}
 function fit(){const t=document.getElementById('tree'), avail=document.getElementById('wrap').clientWidth-32;
-  setScale(Math.max(innerWidth>=900?.45:.62,Math.min(1,avail/t.dataset.w)))}
-window.addEventListener('resize',()=>{if(people.length) fit()});
+  setScale(Math.max(innerWidth>=900?.75:.7,Math.min(1,avail/t.dataset.w)))}
+let lastW=innerWidth;
+window.addEventListener('resize',()=>{if(people.length&&innerWidth!==lastW){lastW=innerWidth;fit()}});
+function zoomTo(s){
+  const w=document.getElementById('wrap'), old=scale;
+  s=Math.max(.3,Math.min(1.8,s)); if(s===old) return;
+  const cx=(w.scrollLeft+w.clientWidth/2)/old, cy=(scrollY+innerHeight/2-w.offsetTop)/old;
+  setScale(s);
+  w.scrollLeft=cx*s-w.clientWidth/2; scrollTo(scrollX,cy*s+w.offsetTop-innerHeight/2);
+}
+document.getElementById('zIn').onclick=()=>zoomTo(scale*1.25);
+document.getElementById('zOut').onclick=()=>zoomTo(scale/1.25);
+document.getElementById('wrap').addEventListener('wheel',e=>{if(e.ctrlKey){e.preventDefault();zoomTo(scale*(e.deltaY<0?1.1:1/1.1))}},{passive:false});
+let pinch=null;
+const tdist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+document.getElementById('wrap').addEventListener('touchstart',e=>{if(e.touches.length===2)pinch={d:tdist(e.touches),s:scale}},{passive:true});
+document.getElementById('wrap').addEventListener('touchmove',e=>{if(pinch&&e.touches.length===2){e.preventDefault();zoomTo(pinch.s*tdist(e.touches)/pinch.d)}},{passive:false});
+document.getElementById('wrap').addEventListener('touchend',e=>{if(e.touches.length<2)pinch=null});
 
 /* ---------- datos ---------- */
 function msg(t){const m=document.getElementById('msg');m.textContent=t;m.hidden=!t}
