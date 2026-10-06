@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Árbol familiar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f1e9; --card:#fffdf8; --ink:#2b2622; --muted:#7a6f64;
+  --line:#b59f86; --accent:#7d5a3c; --dead:#9a9089; --hl:#e9dcc8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif}
+header{padding:20px 16px 8px;text-align:center}
+h1{font-family:"Cormorant Garamond",serif;font-weight:600;font-size:clamp(26px,6vw,40px);margin:0}
+.sub{color:var(--muted);font-size:13px;margin-top:4px}
+.tools{display:flex;gap:8px;justify-content:center;padding:8px 16px 12px}
+.tools button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 14px;font-size:15px;cursor:pointer}
+#wrap{overflow:auto;padding:16px;min-height:60vh;-webkit-overflow-scrolling:touch}
+#tree{position:relative;transform-origin:0 0}
+svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
+.card{position:absolute;background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;
+  box-shadow:0 2px 6px rgba(80,60,40,.08);transition:transform .15s}
+.card:hover{transform:translateY(-2px)}
+.card .n{font-family:"Cormorant Garamond",serif;font-weight:700;font-size:18px;line-height:1.1}
+.card .a{font-family:"Cormorant Garamond",serif;font-weight:600;font-size:16px;color:var(--accent)}
+.card .d{font-size:11.5px;color:var(--muted);margin-top:4px}
+.card.dead{border-style:dashed;border-color:var(--dead)}
+.card.me{background:var(--hl);border-color:var(--accent);border-width:2px}
+.card .dot{position:absolute;top:8px;right:9px;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+#sheet{position:fixed;inset:auto 0 0 0;background:var(--card);border-top:1px solid var(--line);border-radius:18px 18px 0 0;
+  padding:20px 18px 28px;max-height:75vh;overflow:auto;transform:translateY(105%);transition:transform .25s;box-shadow:0 -6px 24px rgba(0,0,0,.12)}
+#sheet.open{transform:none}
+#sheet h2{font-family:"Cormorant Garamond",serif;margin:0 0 8px;font-size:26px}
+#sheet dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:14px}
+#sheet dt{color:var(--muted)}
+#sheet .notes{white-space:pre-wrap;margin-top:14px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;line-height:1.5}
+#sheet .x{position:absolute;top:12px;right:14px;border:0;background:none;font-size:26px;color:var(--muted);cursor:pointer}
+.link{color:var(--accent);cursor:pointer;text-decoration:underline}
+#msg{text-align:center;color:var(--muted);padding:30px}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Árbol familiar</h1>
+  <div class="sub">Tocá una persona para ver sus datos</div>
+</header>
+<div class="tools">
+  <button id="zout" aria-label="Alejar">−</button>
+  <button id="zfit">Ajustar</button>
+  <button id="zin" aria-label="Acercar">+</button>
+</div>
+<div id="wrap"><div id="msg">Cargando…</div><div id="tree"></div></div>
+<div id="sheet"><button class="x" onclick="closeSheet()">×</button><div id="sheetBody"></div></div>
+
+<script>
+/* ===== CONFIGURACIÓN ===== */
+const TITLE = "Árbol familiar";
+// Pegá acá el link de "Publicar en la web" → formato CSV de tu planilla.
+// Si queda vacío, se muestran los datos de ejemplo de abajo.
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTPTYrzludVTlRrvpP4krRQaf5evkoj5irYhEOvLwKibU7870MSfqmxqicEgRdrKsd4UxYe1x5DsL7G/pub?gid=741816579&single=true&output=csv";
+/* ========================= */
+
+const DEMO = `id,nombre,apellidos,nacimiento,lugar_nacimiento,fallecimiento,lugar_fallecimiento,padre_id,madre_id,pareja_id,yo,notas
+ernesto,Ernesto,Cánfora,18-12-1950,Ciudad Autónoma de Buenos Aires,,,,,gladis,,
+gladis,Gladis Josefina,Banega,05-09-1965,"Goya, Corrientes",,,,,ernesto,,
+florencia,Florencia Antonella,Cánfora,05-10-1992,Ciudad Autónoma de Buenos Aires,,,ernesto,gladis,,si,`;
+
+const W=168, H=92, GX=28, GY=96, PAD=20;
+let people=[], byId={}, scale=1;
+
+function parseCSV(t){
+  const rows=[]; let row=[], f='', q=false;
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(q){ if(c=='"'){ if(t[i+1]=='"'){f+='"';i++} else q=false } else f+=c }
+    else if(c=='"') q=true;
+    else if(c==','){ row.push(f); f='' }
+    else if(c=='\n'||c=='\r'){ if(c=='\r'&&t[i+1]=='\n') i++; row.push(f); rows.push(row); row=[]; f='' }
+    else f+=c;
+  }
+  if(f!==''||row.length){ row.push(f); rows.push(row) }
+  return rows.filter(r=>r.some(x=>x.trim()));
+}
+function toObjects(rows){
+  const h=rows[0].map(x=>x.trim().toLowerCase());
+  return rows.slice(1).map((r,i)=>{const o={_i:i};h.forEach((k,j)=>o[k]=(r[j]||'').trim());return o}).filter(o=>o.id);
+}
+const partnersOf=p=>(p.pareja_id||'').split(/[;,]/).map(s=>s.trim()).filter(id=>byId[id]);
+const parentsOf=p=>[p.padre_id,p.madre_id].filter(id=>id&&byId[id]);
+const childrenOf=p=>people.filter(c=>c.padre_id===p.id||c.madre_id===p.id);
+const fullName=p=>`${p.nombre||''} ${p.apellidos||''}`.trim();
+const isYes=v=>/^(si|sí|x|1|true)$/i.test(v||'');
+
+function generations(){
+  const gen={}; people.forEach(p=>gen[p.id]=0);
+  for(let n=0;n<60;n++){
+    let ch=false;
+    for(const p of people){
+      for(const pid of parentsOf(p)) if(gen[p.id]<=gen[pid]){gen[p.id]=gen[pid]+1;ch=true}
+      for(const q of partnersOf(p)) if(gen[q]!==gen[p.id]){const m=Math.max(gen[q],gen[p.id]);gen[q]=gen[p.id]=m;ch=true}
+    }
+    if(!ch) break;
+  }
+  return gen;
+}
+
+function layout(){
+  const gen=generations(), pos={};
+  const levels=[...new Set(Object.values(gen))].sort((a,b)=>a-b);
+  for(const L of levels){
+    const row=people.filter(p=>gen[p.id]===L), seen=new Set(), units=[];
+    for(const p of row){ // agrupar parejas en una misma unidad
+      if(seen.has(p.id)) continue;
+      const u=[], st=[p];
+      while(st.length){const x=st.pop(); if(seen.has(x.id)) continue; seen.add(x.id); u.push(x);
+        partnersOf(x).forEach(id=>{if(gen[id]===L) st.push(byId[id])})}
+      u.sort((a,b)=>a._i-b._i); units.push(u);
+    }
+    units.forEach(u=>{
+      const xs=u.flatMap(parentsOf).filter(id=>pos[id]).map(id=>pos[id].x+W/2);
+      u._c = xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : null;
+      u._k = u._c ?? 1e9+u[0]._i;
+    });
+    units.sort((a,b)=>a._k-b._k);
+    let cur=PAD;
+    for(const u of units){
+      const uw=u.length*W+(u.length-1)*GX;
+      if(u._c!=null) cur=Math.max(cur,u._c-uw/2);
+      u.forEach(p=>{pos[p.id]={x:cur,y:PAD+L*(H+GY)};cur+=W+GX});
+      cur+=GX;
+    }
+  }
+  const minX=Math.min(...Object.values(pos).map(p=>p.x));
+  Object.values(pos).forEach(p=>p.x+=PAD-minX);
+  return pos;
+}
+
+function render(){
+  const tree=document.getElementById('tree'); tree.innerHTML='';
+  document.getElementById('msg').style.display='none';
+  const pos=layout();
+  const maxX=Math.max(...Object.values(pos).map(p=>p.x))+W+PAD;
+  const maxY=Math.max(...Object.values(pos).map(p=>p.y))+H+PAD;
+  tree.style.width=maxX+'px'; tree.style.height=maxY+'px'; tree.dataset.w=maxX; tree.dataset.h=maxY;
+
+  const ns='http://www.w3.org/2000/svg', svg=document.createElementNS(ns,'svg');
+  svg.setAttribute('width',maxX); svg.setAttribute('height',maxY);
+  const line=(x1,y1,x2,y2,dash)=>{const l=document.createElementNS(ns,'line');
+    Object.entries({x1,y1,x2,y2,stroke:'var(--line)','stroke-width':1.6}).forEach(([k,v])=>l.setAttribute(k,v));
+    if(dash) l.setAttribute('stroke-dasharray','5 4'); svg.appendChild(l)};
+
+  // líneas de pareja
+  const drawn=new Set();
+  people.forEach(p=>partnersOf(p).forEach(q=>{
+    const k=[p.id,q].sort().join('|'); if(drawn.has(k)) return; drawn.add(k);
+    const a=pos[p.id], b=pos[q]; if(a.y!==b.y) return;
+    const [l,r]=a.x<b.x?[a,b]:[b,a]; line(l.x+W,l.y+H/2,r.x,r.y+H/2);
+  }));
+  // líneas padres → hijos
+  const groups={};
+  people.forEach(c=>{const ps=parentsOf(c); if(!ps.length) return; const k=ps.slice().sort().join('|'); (groups[k]=groups[k]||[]).push(c)});
+  Object.entries(groups).forEach(([k,kids])=>{
+    const ps=k.split('|').map(id=>pos[id]);
+    let ax, ay;
+    if(ps.length===2 && ps[0].y===ps[1].y){ ax=(ps[0].x+ps[1].x+W)/2; ay=ps[0].y+H/2 }
+    else { ax=ps[0].x+W/2; ay=ps[0].y+H }
+    const cy=pos[kids[0].id].y, bus=cy-GY/2;
+    line(ax,ay,ax,bus);
+    const xs=kids.map(c=>pos[c.id].x+W/2).concat(ax);
+    line(Math.min(...xs),bus,Math.max(...xs),bus);
+    kids.forEach(c=>line(pos[c.id].x+W/2,bus,pos[c.id].x+W/2,pos[c.id].y));
+  });
+  tree.appendChild(svg);
+
+  people.forEach(p=>{
+    const d=document.createElement('div'), P=pos[p.id];
+    d.className='card'+(p.fallecimiento?' dead':'')+(isYes(p.yo)?' me':'');
+    d.style.cssText=`left:${P.x}px;top:${P.y}px;width:${W}px;height:${H}px`;
+    const yrs=[p.nacimiento&&p.nacimiento.slice(-4), p.fallecimiento&&('† '+p.fallecimiento.slice(-4))].filter(Boolean).join(' – ');
+    d.innerHTML=`${p.notas?'<span class="dot" title="Tiene notas"></span>':''}
+      <div class="n">${esc(p.nombre)}</div><div class="a">${esc(p.apellidos)}</div>
+      <div class="d">${esc(yrs)}${p.lugar_nacimiento?' · '+esc(p.lugar_nacimiento):''}</div>`;
+    d.onclick=()=>openSheet(p.id);
+    tree.appendChild(d);
+  });
+  fit();
+}
+
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function names(ids){return ids.map(id=>`<span class="link" onclick="openSheet('${id}')">${esc(fullName(byId[id]))}</span>`).join(', ')}
+
+function openSheet(id){
+  const p=byId[id], rows=[
+    ['Nacimiento',[p.nacimiento,p.lugar_nacimiento].filter(Boolean).join(' · ')],
+    ['Fallecimiento',[p.fallecimiento,p.lugar_fallecimiento].filter(Boolean).join(' · ')],
+    ['Padres',names(parentsOf(p))],
+    ['Pareja/s',names(partnersOf(p))],
+    ['Hijos/as',names(childrenOf(p).map(c=>c.id))],
+  ].filter(r=>r[1]);
+  document.getElementById('sheetBody').innerHTML=`<h2>${esc(fullName(p))}</h2>
+    <dl>${rows.map(([k,v])=>`<dt>${k}</dt><dd style="margin:0">${k==='Padres'||k==='Pareja/s'||k==='Hijos/as'?v:esc(v)}</dd>`).join('')}</dl>
+    ${p.notas?`<div class="notes">${esc(p.notas)}</div>`:''}`;
+  document.getElementById('sheet').classList.add('open');
+}
+function closeSheet(){document.getElementById('sheet').classList.remove('open')}
+
+function setScale(s){scale=Math.max(.3,Math.min(2,s)); const t=document.getElementById('tree');
+  t.style.transform=`scale(${scale})`; t.parentElement.style.height=''; t.style.marginBottom=`${(scale-1)*t.dataset.h}px`;
+  t.style.marginRight=`${(scale-1)*t.dataset.w}px`}
+function fit(){const t=document.getElementById('tree'), avail=document.getElementById('wrap').clientWidth-32;
+  setScale(Math.min(1,avail/t.dataset.w))}
+document.getElementById('zin').onclick=()=>setScale(scale+.15);
+document.getElementById('zout').onclick=()=>setScale(scale-.15);
+document.getElementById('zfit').onclick=fit;
+
+async function load(){
+  document.getElementById('title').textContent=TITLE; document.title=TITLE;
+  try{
+    const txt = SHEET_CSV_URL ? await (await fetch(SHEET_CSV_URL+(SHEET_CSV_URL.includes('?')?'&':'?')+'t='+Date.now())).text() : DEMO;
+    people=toObjects(parseCSV(txt)); byId=Object.fromEntries(people.map(p=>[p.id,p]));
+    if(!people.length) throw new Error('vacío');
+    render();
+  }catch(e){ document.getElementById('msg').textContent='No pude cargar la planilla. Revisá que esté publicada como CSV.' }
+}
+load();
+</script>
+</body>
+</html>
